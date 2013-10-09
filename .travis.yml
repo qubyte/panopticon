@@ -5,6 +5,6 @@ node_js:
  - "0.11"
 deploy:
     provider: npm
-    api_key: "NVuh3tsxrsxmvr3FLn5pIth6FePFDMrpNLHEL72KCWitidQGhbI+EDg7q3aA5JxSTHEVrBcZSb7KEklDJR7T1Wgyea4AR0XS0J0TIMkID2UksjHvBdM9O4Q3VpZ4jDys+JiR9duLqHXn2yzbBM0cK94EqJINLZKDER7yPsPoFlQ="
+    secure: "NVuh3tsxrsxmvr3FLn5pIth6FePFDMrpNLHEL72KCWitidQGhbI+EDg7q3aA5JxSTHEVrBcZSb7KEklDJR7T1Wgyea4AR0XS0J0TIMkID2UksjHvBdM9O4Q3VpZ4jDys+JiR9duLqHXn2yzbBM0cK94EqJINLZKDER7yPsPoFlQ="
     on:
         tags: true
