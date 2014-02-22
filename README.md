@@ -36,7 +36,7 @@ var panopticon = new Panopticon(options);
 
 `startTime` (ms since the unix epoch) is an optional time to start from, `interval` is the time delay (in ms) between batches of data and `scaleFactor` scales the reporting from some of the reporter types. If no `startTime` is provided, then it defaults to `0`. Similarly, if no sane `interval` is provided, it defaults to 10 seconds. By default the scale of reporting is in kilohertz. `persist` is a boolean, and tells the panopticon if it should be keeping data paths around after each interval.
 
-The `startTime`, if used, must be the same across your cluster. This is simple to manage using the optional environment  argument to `cluster.fork`. i.e. the master can use `startTime = Date.now()`, and pass this value to the forked workers with `cluster.fork({ START_TIME: startTime })`. If not used (undefined or otherwise falsy) then it defaults to 0, so the first interval will be short, but all workers will have the same starting point without communicating a value. A modulo function is used internally to calculate when the current interval ends, so there is no additional cost associated with starting from 0.
+The `startTime`, if used, must be the same across your cluster. This is simple to manage using the optional environment argument to `cluster.fork`. i.e. the master can use `startTime = Date.now()`, and pass this value to the forked workers with `cluster.fork({ START_TIME: startTime })`. If not used (undefined or otherwise falsy) then it defaults to 0, so the first interval will be short, but all workers will have the same starting point without communicating a value. A modulo function is used internally to calculate when the current interval ends, so there is no additional cost associated with starting from 0.
 
 If no value is passed in for `scaleFactor`, it defaults to `1` (reports in kHz). Panopticon internally calculates the rate of increments, so it needs to be told if this scale is wrong. For example, to change the reporting of incrementers and timed samples to Hz, set this value to `1000`. This only affects incrementers and timed samples, since these are concerned with timing. Sets and samples are your responsibility, so if these should be reporting in something other than kHz for those, then you must give the panopticon the data in the scale desired.
 
@@ -65,7 +65,88 @@ Without `persist` turned on, a completely fresh batch of data is started by each
 
 ### `transformer`
 
-A transformer function can be used to rearrange the aggregated data. For example:
+The representation of data internally is quite verbose and often deeply nested. For example:
+
+```javascript
+var cluster = require('cluster');
+var panopticon = new require('Panopticon')({ name: 'A name' });
+
+if (cluster.isMaster) {
+		panopticon.inc(['test', 'path'], 'testing123', 1);
+}
+```
+
+on the master process with no other measurements within an interval will have an internal representation before aggregation of:
+
+```javascript
+{
+	test: {
+		path: {
+			testing123: { 
+					type: 'inc',
+					value: { val: 0.0001, timeStamp: 1393083960000 }
+			}
+		}
+	}
+}
+```
+
+The value has been averaged over the interval (by default 10000ms) and the timestamp is the timestamp of the interval (not the measurement itself since many can occur in the interval). Sub-objects that contain the measurement information over an interval always have the `type` and `value` fields.
+
+To make it easier to manipulate data to your requirements the optional `transformer` field of the options object for a new Pantopticon instance is a function which takes `data` of an interval and a process and manipulates them into a new object. The default transformer is simply:
+
+```javascript
+module.exports = function (data, id) {
+		if (id === 'master') {
+				return { master: data };
+		}
+
+		var toReturn = { workers: {} };
+		toReturn.workers[id] = data;
+
+		return toReturn;
+};
+```
+
+Each interval the result of the transformer on the data for each process is merged recursively. i.e., the following code
+
+```javascript
+panopticon.inc(['test', 'path'], 'testing123', 1);
+```
+
+On the master process and a worker with id `1` will look like:
+
+```javascript
+{
+	id: 0,
+	name: 'A name',
+	interval: 10000,
+	data: {
+		master: {
+			test: {
+				path: {
+					testing123: {
+						type: 'inc',
+						value: { val: 0.0001, timeStamp: 1393083960000 }
+					}
+				}
+			}
+		}
+		'1': {
+			test: {
+				path: {
+					testing123: {
+						type: 'inc',
+						value: { val: 0.0001, timeStamp: 1393083960000 }
+					}
+				}
+			}
+		}
+	}
+}
+```
+
+This is obviously bulky. The intent of the default transformer is to avoid losing any information. You can use your own transformer to rearrange the aggregated data. For example:
 
 ```javascript
 function transformer(data, id) {
@@ -94,7 +175,30 @@ function transformer(data, id) {
 }
 ```
 
-The function takes raw data, and looks for occurrences of the `'value'` key, associated with panopticon data types. When it finds one, it puts the content into a small object called `'values'` against a key which is the worker ID. Panopticon merges objects together on aggregation, so values objects are merged, keeping related data together.
+The function takes raw data, and looks for occurrences of the `'value'` key, associated with panopticon data types. When it finds one, it puts the content into a small object called `'values'` against a key which is the worker ID. Panopticon merges objects together on aggregation, so values objects are merged, keeping related data together. The delivered data with the same measurements in an interval will look like
+
+```javascript
+{
+	id: 0,
+	name: 'A name',
+	interval: 10000,
+	data: {
+		test: {
+			path: {
+				testing123: {
+					type: 'inc',
+					values: { 
+						master: { val: 0.0001, timeStamp: 1393083960000 }, // Measurement on master.
+						'1': { val: 0.0001, timeStamp: 1393083960000 }     // Measurement on worker 1.
+					}
+				}
+			}
+		}
+	}
+}
+```
+
+which is more compact. Care should be taken if you want to go a step further and merge samples or timed samples over the cluster. Averages are obvious to handle, but standard deviations should be handled by averaging the variances.
 
 ## Panoptica
 
@@ -219,6 +323,21 @@ The sample method keeps track of the maximum, minimum and standard deviation of 
 calls in an interval. The sample is registered to the aggregated object on the given `path` with a
 key given by `id`.
 
+When samples are ready to be transformed for a process, they look like:
+
+```javascript
+{
+	type: 'sample',
+	value: {
+		max: this.max,            // The maximum value in the interval.
+		min: this.min,            // The minimum value in the interval.
+		sigma: this.sigma,        // The (approximate) standard deviation of values in the interval.
+		average: this.average,    // The average of the values in the interval.
+		timeStamp: this.timeStamp // The time stamp of an interval.
+	}
+}
+```
+
 ### `panopticon.timedSample(path, id, dt)`
 
 Similar to the sample method, but instead of a number `n` it takes `dt`, the result of a [high
@@ -226,11 +345,53 @@ resolution timer](http://nodejs.org/api/process.html#process_process_hrtime) cal
 array of numbers). This method also keeps track of the count and total time over all calls in an
 interval.
 
+When timed samples are ready to be transformed for a process, they look like (all scaled):
+
+```javascript
+{
+	type: 'timedSample',
+	value: {
+		min: this.min,                 // The maximum time in the interval.
+		max: this.max,                 // The minimum time in the interval.
+		sigma: this.sigma,             // The (approximate) standard deviation of times in the interval.
+		average: this.average,         // The average of the values in the interval.
+		count: count,                  // The number of timed samples recorded.
+		total: total,                  // Sum of the samples recorded.
+		scaleFactor: this.scaleFactor, // The scale factor of the interval.
+		timeStamp: this.timeStamp      // The time stamp of an interval.
+	}
+}
+```
+
 ### `panopticon.inc(path, id, n)`
 
 Increments by `n`. If this the first call of inc with this `path` and `id`, then the starting
 value is assumed to be 0.
 
+When increments are ready to be transformed for a process, they look like:
+
+```javascript
+{
+	type: 'inc',
+	value: {
+		val: this.value,           // Scaled no. of increments in an interval.
+		timeStamp: this.timeStamp // The time stamp of the interval.
+	}
+}
+```
+
 ### `panopticon.set(path, id, value)`
 
 Set a value on a path with id.
+
+When sets are ready to be transformed for a process, they look like:
+
+```javascript
+{
+	type: 'set',
+	value: {
+		val: this.value,          // The value. Typically a string.
+		timeStamp: this.timeStamp // The time stamp of the interval.
+	}
+}
+```
