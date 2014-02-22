@@ -1,17 +1,26 @@
-var Panopticon = require(__dirname + '/../index');
+var panopticonPath = require.resolve(__dirname + '/../index');
 var cluster = require('cluster');
 
 var now = Date.now();
 
+exports.setUp = function (callback) {
+	this.Panopticon = require(panopticonPath);
+	callback();
+};
+
+exports.tearDown = function (callback) {
+	delete require.cache[panopticonPath];
+	callback();
+};
+
 exports['test count static method'] = function (test) {
-	Panopticon._resetCount();
 	test.expect(1);
 
 	var panoptica = [];
 	var count = 10;
 
 	for (var i = 0; i < count; i += 1) {
-		panoptica.push(new Panopticon({
+		panoptica.push(new this.Panopticon({
 			startTime: now,
 			name: i,
 			interval: 1000,
@@ -19,7 +28,7 @@ exports['test count static method'] = function (test) {
 		}));
 	}
 
-	test.strictEqual(Panopticon.count(), count);
+	test.strictEqual(this.Panopticon.count(), count);
 
 	panoptica.forEach(function (panopticon) {
 		panopticon.stop();
@@ -37,7 +46,7 @@ exports['check correct addition and subtraction of listeners on cluster'] = func
 	var initialListeners = cluster.listeners('fork').length;
 
 	for (var i = 0; i < count; i += 1) {
-		panoptica.push(new Panopticon({
+		panoptica.push(new this.Panopticon({
 			startTime: now,
 			name: i,
 			interval: 1000,
@@ -62,7 +71,7 @@ exports['check correct addition and subtraction of listeners on cluster'] = func
 exports['instantiation without interval is treated as 10000ms'] = function (test) {
 	test.expect(1);
 
-	var panopticon = new Panopticon({ name: 'testSingle' });
+	var panopticon = new this.Panopticon({ name: 'testSingle' });
 
 	test.strictEqual(panopticon.interval, 10000);
 
@@ -76,7 +85,7 @@ exports['test delivery'] = function (test) {
 
 	var interval = 25;
 
-	var panopticon = new Panopticon({
+	var panopticon = new this.Panopticon({
 		startTime: Date.now(),
 		name: 'testDelivery',
 		interval: interval,
@@ -96,6 +105,7 @@ exports['test delivery'] = function (test) {
 	panopticon.set(null, 'should get removed', 'some info');
 
 	panopticon.on('delivery', function (data) {
+		/* jshint maxlen: false */
 		intervals += 1;
 
 		if (intervals === 1) {
@@ -123,7 +133,7 @@ exports['test api'] = function (test) {
 	var interval = 200;
 	var scaleFactor = 1;
 
-	var panopticon = new Panopticon({
+	var panopticon = new this.Panopticon({
 		startTime: Date.now(),
 		name: 'testApi',
 		interval: interval,
@@ -210,7 +220,7 @@ exports['test worker process panopticon'] = function (test) {
 		return test.done();
 	};
 
-	var panopticon = new Panopticon({
+	var panopticon = new this.Panopticon({
 		startTime: Date.now(),
 		name: 'testSet',
 		interval: 100,
@@ -228,72 +238,77 @@ exports['test worker process panopticon'] = function (test) {
 };
 
 exports['try cluster'] = function (test) {
-	test.expect(7);
+	test.expect(6);
 
-	Panopticon._resetCount();
+	var count = 0;
+	var disconnects = 0;
+
 	var start = Date.now();
 
-	var panopticon = new Panopticon({
+	var panopticon = new this.Panopticon({
 		startTime: start,
 		name: 'testSet',
-		interval: 100,
+		interval: 200,
 		scaleFactor: 1,
 		persist: true
 	});
 
-	panopticon.inc(['incpath'], 'testInc', 1);
+	cluster.on('setup', function () {
+		panopticon.inc(['incpath'], 'testInc', 1);
 
-	var count = 0;
+		var worker1 = cluster.fork();
+		var worker2 = cluster.fork();
+
+		panopticon.on('delivery', function onDelivery(data) {
+			count += 1;
+
+			if (count < 2) {
+				return;
+			}
+
+			panopticon.removeListener('delivery', onDelivery);
+
+			test.ok(data.data.workers);
+			test.strictEqual(Object.keys(data.data.workers).length, 2);
+			test.ok(data.data.workers[worker1.id]);
+			test.ok(data.data.workers[worker2.id]);
+
+			var workerData1 = data.data.workers[worker1.id];
+			var workerData2 = data.data.workers[worker2.id];
+
+			test.strictEqual(workerData1['my name is'].value.val, 'slim shady');
+			test.strictEqual(workerData2['my name is'].value.val, 'slim shady');
+
+			worker1.destroy();
+			worker2.destroy();
+		});
+	});
+
+	cluster.on('disconnect', function onDisconnect() {
+		disconnects += 1;
+
+		if (disconnects < 2) {
+			return;
+		}
+
+		cluster.removeListener('disconnect', onDisconnect);
+
+		panopticon.stop();
+
+		test.done();
+	});
 
 	cluster.setupMaster({
 		exec: __dirname + '/scripts/worker.js',
 		args: [start],
 		silent: false
 	});
-
-	var worker1 = cluster.fork();
-	var worker2 = cluster.fork();
-
-	panopticon.on('delivery', function (data) {
-		if (count !== 1) {
-			count += 1;
-			return;
-		}
-
-		test.ok(data.data.workers);
-		test.strictEqual(Object.keys(data.data.workers).length, 2);
-		test.ok(data.data.workers[worker1.id]);
-		test.ok(data.data.workers[worker2.id]);
-
-		var workerData1 = data.data.workers[worker1.id];
-		var workerData2 = data.data.workers[worker2.id];
-
-		test.strictEqual(workerData1['my name is'].value.val, 'slim shady');
-		test.strictEqual(workerData2['my name is'].value.val, 'slim shady');
-
-		worker1.destroy();
-		worker2.destroy();
-	});
-
-	var disconnects;
-
-	cluster.on('disconnect', function () {
-		if (!disconnects) {
-			disconnects = true;
-			return;
-		}
-
-		panopticon.stop();
-
-		test.ok(true);
-		test.done();
-	});
 };
 
 exports['bad sample should add no data'] = function (test) {
 	test.expect(1);
 
-	var panopticon = new Panopticon({
+	var panopticon = new this.Panopticon({
 		startTime: Date.now(),
 		name: 'badSample',
 		interval: 100,
@@ -314,7 +329,7 @@ exports['bad sample should add no data'] = function (test) {
 exports['bad timed sample should add no data'] = function (test) {
 	test.expect(1);
 
-	var panopticon = new Panopticon({
+	var panopticon = new this.Panopticon({
 		startTime: Date.now(),
 		name: 'badTimedSample',
 		interval: 100,
@@ -335,7 +350,7 @@ exports['bad timed sample should add no data'] = function (test) {
 exports['get the list of registered functions'] = function (test) {
 	test.expect(5);
 
-	var methods = Panopticon.getLoggerMethodNames();
+	var methods = this.Panopticon.getLoggerMethodNames();
 
 	test.strictEqual(methods.length, 4);
 	test.notStrictEqual(methods.indexOf('sample'), -1);
@@ -348,30 +363,33 @@ exports['get the list of registered functions'] = function (test) {
 
 exports['overwriting a prototype property with a registration should throw'] = function (test) {
 	test.expect(1);
+	var Panopticon = this.Panopticon;
 
 	test.throws(function () {
 		Panopticon.registerMethod('stop', function () {});
-	});
+	}, /Method "stop" is already a panopticon prototype property./);
 
 	test.done();
 };
 
 exports['overwriting a registered method with a registration should throw'] = function (test) {
 	test.expect(1);
+	var Panopticon = this.Panopticon;
 
 	test.throws(function () {
 		Panopticon.registerMethod('sample', function () {});
-	});
+	}, /Method "sample" is already registered./);
 
 	test.done();
 };
 
 exports['attempting to register a non-function method should throw'] = function (test) {
 	test.expect(1);
+	var Panopticon = this.Panopticon;
 
 	test.throws(function () {
 		Panopticon.registerMethod('hello', null);
-	});
+	}, /loggerClass must be a constructor function./);
 
 	test.done();
 };
@@ -380,14 +398,14 @@ exports['forgetting \'new\' should be ok'] = function (test) {
 	/* jshint newcap: false */
 	test.expect(1);
 
-	var panopticon = Panopticon({
+	var panopticon = this.Panopticon({
 		startTime: now,
 		name: 'noName',
 		interval: 1000,
 		scaleFactor: 1
 	});
 
-	test.ok(panopticon instanceof Panopticon);
+	test.ok(panopticon instanceof this.Panopticon);
 
 	// Need to call stop to cancel event listeners.
 	panopticon.stop();

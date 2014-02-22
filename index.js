@@ -6,7 +6,7 @@ var EventEmitter   = require('events').EventEmitter;
 var cluster        = require('cluster');
 var util           = require('util');
 
-// Panopticon data types.
+// Panopticon built in loggers.
 var SetLog         = require('./lib/Set');
 var IncLog         = require('./lib/Inc');
 var SampleLog      = require('./lib/Sample');
@@ -149,17 +149,6 @@ Panopticon.getLoggerMethodNames = function () {
 
 Panopticon.count = function () {
 	return instanceCount;
-};
-
-
-/**
- * Used for unit testing to reset the panopticon count. DO NOT USE.
- *
- * @private
- */
-
-Panopticon._resetCount = function () {
-	instanceCount = 0;
 };
 
 

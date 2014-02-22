@@ -4,6 +4,7 @@
   "description": "Data acquisition for applications that use the cluster module.",
   "contributors": [
     { "name": "Mark Stanley Everitt", "email": "mark.s.everitt@gmail.com" },
+    { "name": "Ron Korving", "email": "rkorving@wizcorp.jp" },
     { "name": "Tom Farmer", "email": "tfarmer@wizcorp.jp" }
   ],
   "main": "index.js",
@@ -16,7 +17,7 @@
     "test": "test"
   },
   "scripts": {
-    "test": "nodeunit test",
+    "test": "nodeunit test && jshint ./*.js ./lib/*.js ./private/*.js ./test/*.js",
     "cover": "istanbul cover nodeunit test"
   },
   "repository": {

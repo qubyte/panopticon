@@ -11,6 +11,7 @@ var merge = require('./merge');
 
 module.exports = function (panopticon, worker) {
 	function onMessage(message) {
+		/* istanbul ignore else */
 		if (message.event === 'workerSample' && message.id === panopticon.id) {
 
 			// Apply transform to raw data.

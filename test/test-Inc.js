@@ -1,3 +1,4 @@
+/* jshint maxlen: false */
 var EventEmitter = require('events').EventEmitter;
 var IncClass = require(__dirname + '/../lib/Inc');
 

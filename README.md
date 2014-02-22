@@ -168,10 +168,6 @@ Returns a copy of an array which lists registered method names.
 
 Returns the number of panopticon instances that have been started. Useful for testing.
 
-### `Panopticon._reset()`
-
-Resets the count of instances. Strictly for testing use only. Do not use this.
-
 ### Event: 'delivery'
 
 ```javascript
